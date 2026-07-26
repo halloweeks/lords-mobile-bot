@@ -27,7 +27,16 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+
 #include "des.h"
+
+#include <sys/epoll.h>
 
 typedef enum {
 	EMS_Null,
@@ -807,9 +816,47 @@ typedef struct {
     uint8_t count;
 } AllianceMemberList;
 
+typedef enum {
+    CONN_DISCONNECTED = 0,
+    
+    /* Connecting to gateway server */
+    CONN_CONNECTING_GATEWAY,
+    
+    CONN_CONNECTED_GATEWAY,
+
+    /* Waiting for gateway login response */
+    CONN_WAIT_GATEWAY_LOGIN,
+    CONN_GATEWAY_LOGIN_FAILED,
+    
+    
+    
+    
+    /* Connecting to game server */
+    CONN_CONNECTING_GAME,
+    CONN_CONNECT_GAME,
+    CONN_CONNECTED_GAME,
+
+    /* Waiting for game login response */
+    CONN_WAIT_GAME_LOGIN,
+
+    /* Fully logged in and bot is running */
+    CONN_CONNECTED,
+
+    /* Connection lost, waiting before reconnect */
+    CONN_RECONNECTING,
+
+    /* Permanent failure / shutting down */
+    CONN_CLOSED
+} ConnectionState;
+
+// connection.h or a shared header
+extern int epoll_fd;   // make epoll_fd global, set once in main()
+
+
 typedef struct {
 	// network
 	int sock;
+	ConnectionState state;
 	PacketStream stream;
 	// authentication
 	AuthInfo auth;
@@ -936,5 +983,8 @@ void disconnect(Connection *conn);
 bool send_packet(Connection *conn, bool enc);
 int set_nonblocking(Connection *conn);
 void reset_connection(Connection *c);
+bool ConnectGateway(Connection *c);
+bool ConnectServer(Connection *c, const char *ip, unsigned short port);
+bool epoll_register(int epoll_fd, Connection *c, uint32_t events);
 
 #endif

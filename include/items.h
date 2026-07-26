@@ -1,22 +1,6 @@
 #ifndef _ITEMS_H_
 #define _ITEMS_H_
 
-#define RANDOM_RELOCATOR 1003
-#define ADVANCE_RELOCATOR 1004
-
-#define MIGRATION_SCROLL 1275
-
-
-#define SHIELD_4H  1146
-#define SHIELD_8H  1051
-#define SHIELD_12H 1462
-#define SHIELD_1D  1052
-#define SHIELD_3D  1053
-#define SHIELD_7D  1287
-#define SHIELD_14D 1288
-
-#define FAMILIAR_MAGMA_LORD  0x0012
-
 #define FOOD_5K 0x0492 
 #define FOOD_30K 0x03F1 
 #define FOOD_150K 0x03F6 
@@ -63,10 +47,30 @@
 #define GOLD_6M 0x0453 
 
 
-#define BRIGHT_TALENT_ORB 3603
+#define RANDOM_RELOCATOR 1003
+#define ADVANCE_RELOCATOR 1004
+#define MIGRATION_SCROLL 1275
+
+#define SHIELD_4H  1146
+#define SHIELD_8H  1051
+#define SHIELD_12H 1462
+#define SHIELD_1D  1052
+#define SHIELD_3D  1053
+#define SHIELD_7D  1287
+#define SHIELD_14D 1288
+
+// General Speed Ups
+#define SPEED_UP_1_MINUTE  1029
+#define SPEED_UP_15_MINUTE 1040
 #define SPEED_UP_30_MINUTE 1041
 #define SPEED_UP_60_MINUTE 1042
 #define SPEED_UP_3_HOUR 1081
+
+// Research speed Ups
+
+
+#define BRIGHT_TALENT_ORB 3603
+
 
 #define SPEED_UP_MERGING_3_HOUR 1334
 #define SPEED_UP_RESEARCH_3_HOUR 1262
@@ -74,5 +78,8 @@
 #define ANIMA 3709
 
 #define WITHDRAW_SQUAD 1001
+
+
+
 
 #endif

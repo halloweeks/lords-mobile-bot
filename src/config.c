@@ -21,6 +21,8 @@
 
 #include <ctype.h>
 
+#include "log.h"
+
 static CommandChannel ParseCommandChannel(const char *value)
 {
     if (strcmp(value, "WORLD") == 0)
@@ -117,6 +119,7 @@ uint64_t parse_number_u64(const char *str) {
 */
 
 uint64_t parse_number_u64(const char *str);
+
 
 static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	// gateway server 
@@ -350,6 +353,170 @@ bool LoadConfig(Connection *c, const char *filename)
 }
 
 
+size_t CountBotConfigs(const char *filepath) {
+	FILE *fp = fopen(filepath, "r");
+	
+	if (!fp) {
+		return 0;
+	}
+	
+	char line[512];
+	char key[64], value[512];
+	size_t count = 0;
+	
+	while (fgets(line, sizeof(line), fp)) {
+		/* Skip blank lines */
+		if (line[0] == '\n' || line[0] == '\r') 
+			continue;
+		
+		/* Skip comments */
+		if (line[0] == '#' || line[0] == ';' || (line[0] == '/' && line[1] == '/')) 
+			continue;
+		
+		if (sscanf(line, " %63[^=]= %511[^\n]", key, value) != 2) {
+			line[strcspn(line, "\r\n")] = '\0';
+			continue;
+		}
+		
+		key[strcspn(key, " \t")] = '\0';
+		value[strcspn(value, "\r\n")] = '\0';	
+		
+		if (strcmp(key, "include") == 0) {
+			count++;
+		}
+	}
+	
+	return count;
+}
+
+
+ProgramConfig LoadProgramConfig(const char *filepath)
+{
+	ProgramConfig program = {0};
+	
+	FILE *fp = fopen(filepath, "r");
+	
+	if (!fp) {
+		return program;
+	}
+	
+	char line[512];
+	char key[64], value[512];
+	
+	while (fgets(line, sizeof(line), fp)) {
+		/* Skip blank lines */
+		if (line[0] == '\n' || line[0] == '\r') 
+			continue;
+		
+		/* Skip comments */
+		if (line[0] == '#' || line[0] == ';' || (line[0] == '/' && line[1] == '/')) 
+			continue;
+		
+		if (sscanf(line, " %63[^=]= %511[^\n]", key, value) != 2) {
+			line[strcspn(line, "\r\n")] = '\0';
+			continue;
+		}
+		
+		key[strcspn(key, " \t")] = '\0';
+		value[strcspn(value, "\r\n")] = '\0';	
+		
+		// gateway server 
+		if (strcmp(key, "server.addr") == 0) {
+			strncpy(program.server_addr, value, 16);
+			continue;
+		}
+		
+		if (strcmp(key, "server.port") == 0) {
+			program.server_port = (uint16_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		// client version 
+		if (strcmp(key, "client.version_major") == 0) {
+			program.version_major = (uint8_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		if (strcmp(key, "client.version_minor") == 0) {
+			program.version_minor = (uint8_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		if (strcmp(key, "client.version_patch") == 0) {
+			program.version_patch = (uint16_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		if (strcmp(key, "client.language_code") == 0) {
+			program.language_code = (uint8_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		// data path
+		if (strcmp(key, "data.path") == 0) {
+			strncpy(program.data_path, value, 256);
+			continue;
+		}
+		
+		// include bots
+		if (strcmp(key, "include") == 0) {
+			if (program.bot_count >= 256) {
+				LOGE("Maximum number of bot configurations (256) exceeded\n");
+				fclose(fp);
+				return program;
+			}
+			
+			strncpy(program.config_path[program.bot_count], value, sizeof(program.config_path[0]) - 1);
+			program.config_path[program.bot_count][255] = '\0';
+			program.bot_count++;
+			continue;
+		}
+    }
+
+    fclose(fp);
+    return program;
+}
+
+
+
+bool CreateDefaultProgramConfig(const char *filename)
+{
+	FILE *fp = fopen(filename, "w");
+
+	if (!fp) {
+		return false;
+	}
+
+	fprintf(fp,
+		"# Lords Mobile Bot - Program Configuration\n"
+		"# This file contains global application settings.\n"
+		"# Individual bot settings are stored in separate configuration files.\n"
+		"#\n"
+		"# GitHub: https://github.com/halloweeks/lords-mobile-bot\n"
+		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
+
+		"# Gateway server\n"
+		"server.addr = 192.243.44.63\n"
+		"server.port = 5999\n\n"
+
+		"# Game client version\n"
+		"client.version_major = 2\n"
+		"client.version_minor = 197\n"
+		"client.version_patch = 308\n"
+		"client.language_code = 1\n\n"
+
+		"# Directory used to store bot data (logs, databases, cache, etc.)\n"
+		"data.path = lords-mobile-bot/data/\n\n"
+
+		"# Load one or more bot configuration files.\n"
+		"include = configs/bank123.cfg\n"
+		"# include = configs/farm01.cfg\n"
+	);
+
+	fclose(fp);
+	return true;
+}
+
 bool CreateDefaultConfig(const char *filename)
 {
 	FILE *fp = fopen(filename, "w");
@@ -358,23 +525,15 @@ bool CreateDefaultConfig(const char *filename)
 		return false;
 	
 	fprintf(fp,
-		"# Lords Mobile Bot Configuration\n"
-		"# Generated automatically. Edit this file to configure the bot.\n"
-		"# Project: https://github.com/halloweeks/lords-mobile-bot\n"
-		"# Docs: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
-		
-		"# Gateway server\n"
-		"server.addr = 192.243.44.63\n"
-		"server.port = 5999\n\n"
-		
-		"# Client version\n"
-		"client.version_major = 2\n"
-		"client.version_minor = 197\n"
-		"client.version_patch = 308\n"
-		"client.language_code = 1\n\n"
+		"# Lords Mobile Bot - Bot Configuration\n"
+		"# This file contains settings for a single bot account.\n"
+		"# Copy this file to create additional bot configurations.\n"
+		"#\n"
+		"# GitHub: https://github.com/halloweeks/lords-mobile-bot\n"
+		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
 		
 		"# Directory used to store bot data (logs, databases, cache, etc.).\n"
-		"data.path = /sdcard/lmbot/\n\n"
+		"data.path = bank123\n\n"
 		
 		"# Privileged player.\n"
 		"# This player can execute administrator commands and bypass normal restrictions.\n"

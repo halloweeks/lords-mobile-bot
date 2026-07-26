@@ -7,8 +7,6 @@
 #include "log.h"
 #include <stdlib.h>
 
-#include <stdarg.h>
-
 #include "MAP_UPDATE_KIND.h"
 
 // Bootstrap login
@@ -563,7 +561,13 @@ void RequestHelpAllianceMember(Connection *c, uint16_t record_sn_count, const ui
 	}
 	
 	write_u16(c->data, c->size); // update packet size
-	send_packet(c, true);
+	
+	if (send_packet(c, true)) {
+		printf("RequestHelpAllianceMember: success\n");
+	} else {
+		printf("RequestHelpAllianceMember: failed\n");
+	}
+	
 }
 
 void SendStartBuilding(Connection *c,
@@ -1082,15 +1086,6 @@ void HandleLoginValidate(Connection *c, const uint8_t *data, uint16_t size)
 	c->game_server.port = read_i32(data + offset); offset += 4;
 	c->auth.igg_id      = read_i64(data + offset); offset += 8;
 	read_bytes(c->game_server.addr, data + offset, 16); offset += 16;
-	c->lobby_login = 1;
-	
-	// c->auth.igg_id = 2038130744;
-	/*
-	memset(c->game_server.addr, 0, sizeof(c->game_server.addr));
-	
-	memcpy(c->game_server.addr, "192.243.44.35", 13);
-	c->game_server.port = 12024;
-	*/
 }
 
 
@@ -1293,7 +1288,7 @@ void RecvIBuffInfo(Connection *c, const uint8_t *data) {
 				c->shield_info.begin_time = num2;
 				c->shield_info.duration   = num3;
 				
-				printf("[INFO] Shield expires in: %s\n", FormatTime(remaining));
+				printf("[INFO][%s] Shield expires in: %s\n", c->player.name, FormatTime(remaining));
 				break;
 		}
 	}
@@ -1986,7 +1981,7 @@ void RecvBlackMarket_Data(Connection *c, const uint8_t *data) {
 	}
 	
 	// printf("[MARKET RESET] ");
-	LOGI("Black Market resets in ");
+	LOGI("[%s] Black Market resets in ", c->player.name);
 	format_duration(c->server_time, c->market.refresh_time);
 	
 	TryEvaluateBlackMarket(c);
@@ -2005,11 +2000,11 @@ void ResourcesLog(Connection *c) {
 	format_number2(c->resources.ore,   ore_str, 20);
 	format_number2(c->resources.gold, gold_str, 20);
 	
-	printf("[RESOURCE] FOOD = %s\n", food_str);
-	printf("[RESOURCE] ROCK = %s\n", rock_str);
-	printf("[RESOURCE] WOOD = %s\n", wood_str);
-	printf("[RESOURCE] ORE  = %s\n", ore_str);
-	printf("[RESOURCE] GOLD = %s\n", gold_str);
+	printf("[RESOURCE][%s] FOOD = %s\n", c->player.name, food_str);
+	printf("[RESOURCE][%s] ROCK = %s\n", c->player.name, rock_str);
+	printf("[RESOURCE][%s] WOOD = %s\n", c->player.name, wood_str);
+	printf("[RESOURCE][%s] ORE  = %s\n", c->player.name, ore_str);
+	printf("[RESOURCE][%s] GOLD = %s\n", c->player.name, gold_str);
 	return;
 }
 
