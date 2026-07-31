@@ -1,6 +1,6 @@
 #include "connection.h"
 #include "log.h"
-#include"protocol.h"
+// #include"protocol.h"
 
 int set_nonblocking(Connection *conn)
 {
@@ -169,7 +169,7 @@ bool ConnectGateway(Connection *c)
     if (ret == 0) {
         /* Connected immediately (rare) */
         c->state = CONN_WAIT_GATEWAY_LOGIN;
-        RequestGuestLogIn(c);
+        // RequestGuestLogIn(c);
         return true;
     }
 

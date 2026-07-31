@@ -118,8 +118,27 @@ uint64_t parse_number_u64(const char *str) {
 }
 */
 
-uint64_t parse_number_u64(const char *str);
+// uint64_t parse_number_u64(const char *str);
+uint64_t parse_number_u64(const char *str) {
+    double value = 0.0;
+    char suffix = '\0';
 
+    // Read numeric part and optional suffix
+    sscanf(str, "%lf%c", &value, &suffix);
+    suffix = tolower(suffix); // handle both lowercase and uppercase
+
+    // Apply multiplier
+    switch (suffix) {
+        case 'k': value *= 1000ULL; break;
+        case 'm': value *= 1000000ULL; break;
+        case 'b': value *= 1000000000ULL; break;
+        default: break;//return 0;//break; // no suffix
+    }
+
+    if (value < 0) value = 0;
+
+    return (uint64_t)value;
+}
 
 static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	// gateway server 
@@ -241,67 +260,147 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 			return false;
 		}
 		
-		c->market.settings.auto_trade = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.auto_trade = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	// Spend resources 
 	if (strcmp(key, "cargo_ship.spend_food") == 0) {
-		c->market.settings.spend_food = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.spend[0] = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.spend_rock") == 0) {
-		c->market.settings.spend_rock = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.spend[1] = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.spend_wood") == 0) {
-		c->market.settings.spend_wood = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.spend[2] = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.spend_ore") == 0) {
-		c->market.settings.spend_ore  = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.spend[3]  = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.spend_gold") == 0) {
-		c->market.settings.spend_gold  = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.spend[4]  = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	// Use resources from bag
 	if (strcmp(key, "cargo_ship.use_bag_rss") == 0) {
-		c->market.settings.use_bag_rss  = (strcmp(value, "true") == 0);
+		c->cargo_ship.settings.use_bag_rss  = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
 	
 	// Reserved resources 
 	if (strcmp(key, "cargo_ship.reserve_food") == 0) {
-		c->market.reserve.food  = (uint32_t)parse_number_u64(value);
+		c->cargo_ship.reserve[0]  = (uint32_t)parse_number_u64(value);
 		// printf("cargo_ship.reserve_food: %lu\n", c->market.reserve.food);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.reserve_rock") == 0) {
-		c->market.reserve.rock  = (uint32_t)parse_number_u64(value);
+		c->cargo_ship.reserve[1]  = (uint32_t)parse_number_u64(value);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.reserve_wood") == 0) {
-		c->market.reserve.wood  = (uint32_t)parse_number_u64(value);
+		c->cargo_ship.reserve[2]  = (uint32_t)parse_number_u64(value);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.reserve_ore") == 0) {
-		c->market.reserve.ore  = (uint32_t)parse_number_u64(value);
+		c->cargo_ship.reserve[3]  = (uint32_t)parse_number_u64(value);
 		return true;
 	}
 	
 	if (strcmp(key, "cargo_ship.reserve_gold") == 0) {
-		c->market.reserve.gold  = (uint32_t)parse_number_u64(value);
+		c->cargo_ship.reserve[4]  = (uint32_t)parse_number_u64(value);
+		return true;
+	}
+	
+	// trade for blazing ember
+	if (strcmp(key, "cargo_ship.trade_for_blazing_ember") == 0) {
+		c->cargo_ship.trade_for.blazing_ember  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for archaic tome
+	if (strcmp(key, "cargo_ship.trade_for_archaic_tome") == 0) {
+		c->cargo_ship.trade_for.archaic_tome  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for bright_talent_orb
+	if (strcmp(key, "cargo_ship.trade_for_bright_talent_orb") == 0) {
+		c->cargo_ship.trade_for.bright_talent_orb  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for exp elixir
+	if (strcmp(key, "cargo_ship.trade_for_exp_elixir") == 0) {
+		c->cargo_ship.trade_for.exp_elixir  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for speed_up
+	if (strcmp(key, "cargo_ship.trade_for_speed_up") == 0) {
+		c->cargo_ship.trade_for.speed_up  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for speed_up_research
+	if (strcmp(key, "cargo_ship.trade_for_speed_up_research") == 0) {
+		c->cargo_ship.trade_for.speed_up_research  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	
+	// trade for speed_up_merging
+	if (strcmp(key, "cargo_ship.trade_for_speed_up_merging") == 0) {
+		c->cargo_ship.trade_for.speed_up_merging  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for anima
+	if (strcmp(key, "cargo_ship.trade_for_anima") == 0) {
+		c->cargo_ship.trade_for.anima  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	
+	// trade for food
+	if (strcmp(key, "cargo_ship.trade_for_food") == 0) {
+		c->cargo_ship.trade_for.food  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for rock
+	if (strcmp(key, "cargo_ship.trade_for_rock") == 0) {
+		c->cargo_ship.trade_for.rock  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for wood
+	if (strcmp(key, "cargo_ship.trade_for_wood") == 0) {
+		c->cargo_ship.trade_for.wood  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for ore
+	if (strcmp(key, "cargo_ship.trade_for_ore") == 0) {
+		c->cargo_ship.trade_for.ore  = (strcmp(value, "true") == 0);
+		return true;
+	}
+	
+	// trade for gold
+	if (strcmp(key, "cargo_ship.trade_for_gold") == 0) {
+		c->cargo_ship.trade_for.gold  = (strcmp(value, "true") == 0);
 		return true;
 	}
 	
@@ -504,6 +603,17 @@ bool CreateDefaultProgramConfig(const char *filename)
 		"client.version_minor = 197\n"
 		"client.version_patch = 308\n"
 		"client.language_code = 1\n\n"
+		
+		"# Auto reconnect bot after network disconnection\n"
+"# Login failures will not trigger reconnect\n"
+"reconnect.enabled = true\n"
+"\n"
+"# Delay between reconnect attempts (seconds, reserved for future use)\n"
+"reconnect.delay = 5\n"
+"\n"
+"# Maximum reconnect attempts (-1 = unlimited)\n"
+"reconnect.max_attempts = -1\n\n"
+		
 
 		"# Directory used to store bot data (logs, databases, cache, etc.)\n"
 		"data.path = lords-mobile-bot/data/\n\n"
@@ -531,9 +641,6 @@ bool CreateDefaultConfig(const char *filename)
 		"#\n"
 		"# GitHub: https://github.com/halloweeks/lords-mobile-bot\n"
 		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
-		
-		"# Directory used to store bot data (logs, databases, cache, etc.).\n"
-		"data.path = bank123\n\n"
 		
 		"# Privileged player.\n"
 		"# This player can execute administrator commands and bypass normal restrictions.\n"
@@ -653,14 +760,13 @@ bool CreateDefaultConfig(const char *filename)
 		"cargo_ship.reserve_ore  = 10M\n"
 		"cargo_ship.reserve_gold = 10M\n\n"
 		
-		"# Allowed Items (The bot WILL buy these)\n"
-		"cargo_ship.trade_for_archaic_tomes      = true\n"
-		"cargo_ship.trade_for_bright_talent_orb  = true\n"
-		"cargo_ship.trade_for_exp_elixir         = true\n"
-		"cargo_ship.trade_for_speed_up           = true\n"
-		"cargo_ship.trade_for_speed_up_research  = true\n\n"
-		
-		"# Blocked Items (The bot WILL ignore these)\n"
+		"# Items the bot will automatically trade for when enabled (true)\n"
+		"cargo_ship.trade_for_archaic_tome       = false\n"
+		"cargo_ship.trade_for_bright_talent_orb  = false\n"
+		"cargo_ship.trade_for_exp_elixir         = false\n"
+		"cargo_ship.trade_for_speed_up           = false\n"
+		"cargo_ship.trade_for_speed_up_research  = false\n"
+		"cargo_ship.trade_for_blazing_ember      = false\n\n"
 		"cargo_ship.trade_for_speed_up_training  = false\n"
 		"cargo_ship.trade_for_speed_up_merging   = false\n"
 		"cargo_ship.trade_for_anima = false\n\n"

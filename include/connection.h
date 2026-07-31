@@ -4,25 +4,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef _WIN32
-  #ifndef _WIN32_WINNT
-  #define _WIN32_WINNT 0x0601
-  #endif
-  #define WIN32_LEAN_AND_MEAN
-  #define NOMINMAX
-  #include <winsock2.h>
-  #include <ws2tcpip.h>
-  #include <windows.h>
-  typedef unsigned int uint;
-  #define close_socket closesocket
-#else
-  #include <unistd.h>
-  #include <arpa/inet.h>
-  #include <sys/socket.h>
-  #include <netinet/in.h>
-  #include <fcntl.h>
-  #define close_socket close
-#endif
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+
+#define close_socket close
 
 #include <string.h>
 #include <stdio.h>
@@ -37,6 +25,16 @@
 #include "des.h"
 
 #include <sys/epoll.h>
+
+#include "protocol/login.h"
+#include "protocol/chat.h"
+#include "protocol/cargo_ship.h"
+#include "protocol/resource.h"
+#include "protocol/heartbeat.h"
+#include "protocol/alliance.h"
+#include "protocol/hospital.h"
+
+#include "utility.h"
 
 typedef enum {
 	EMS_Null,
@@ -85,6 +83,7 @@ typedef struct {
     int64_t gold;
 } ResourceProduction;
 
+/*
 typedef enum {
     RESOURCE_FOOD,
     RESOURCE_ROCK,
@@ -92,6 +91,7 @@ typedef enum {
     RESOURCE_ORE,
     RESOURCE_GOLD
 } ResourceType;
+*/
 
 typedef struct {
 	uint16_t quantity;
@@ -169,23 +169,19 @@ typedef struct {
     uint8_t  language_code;
 } AppInfo;
 
+/*
 typedef struct {
     int64_t igg_id;
     char device_uuid[50];
     uint16_t session_len;
     char session[512];
-} AuthInfo;
+} AuthInfo;*/
 
 typedef struct {
     uint32_t seq_id;
     uint32_t guest_seq_id;
 } ProtocolState;
 
-typedef struct {
-    char player_name[13];
-    char message[1024];
-    bool pending;
-} ChatState;
 
 /*
 typedef enum {
@@ -240,28 +236,6 @@ typedef struct {
 
 } MailInfo;
 
-typedef enum {
-    Research = 0,
-    Building,
-    Max,
-} HelpKind;
-
-typedef struct {
-    uint32_t record_sn;
-    uint16_t head;
-    uint8_t rank;
-    char player_name[14];
-
-    HelpKind help_kind;
-
-    uint16_t event_id;
-    uint8_t event_data_lv;
-
-    uint8_t already_helped;
-    uint8_t help_max;
-    
-    uint32_t record_sn_arr[255];
-} AllianceHelp;
 
 typedef struct {
 	uint16_t position_id;
@@ -286,20 +260,6 @@ typedef struct {
 } AllianceGift;
 */
 
-
-typedef struct {
-    uint32_t sn;
-    uint8_t status;
-    int64_t rcv_time;
-    uint16_t box_item_id;
-    uint16_t item_id;
-    uint16_t num;
-    uint8_t item_rank;
-    // Option
-    uint32_t diamond;
-    uint32_t money;
-    char player[13];
-} AllianceGift;
 
 
 #define GIFT_TABLE_SIZE 8192
@@ -544,6 +504,7 @@ typedef struct {
 	uint32_t t5_data[4];
 } TroopData;
 
+/*
 typedef struct {
 	bool loaded;
 	TroopData troop;
@@ -551,7 +512,7 @@ typedef struct {
 	long num;
 	uint total_time;
 } WoundedTroopData;
-
+*/
 
 
 typedef struct {
@@ -796,36 +757,15 @@ typedef struct {
 
 
 
-#define MAX_ALLIANCE_MEMBER 100
-
-typedef struct {
-    int64_t user_id;
-    uint16_t head;
-    char name[14];
-    uint8_t rank;
-    uint64_t power;
-    uint64_t troop_kill_num;
-    int64_t logout_time;
-    uint8_t white_list_flag;
-} AllianceMember;
-
-typedef struct {
-    AllianceMember member[MAX_ALLIANCE_MEMBER];
-    uint16_t recv_index;
-    uint8_t data_finished;
-    uint8_t count;
-} AllianceMemberList;
-
 typedef enum {
-    CONN_DISCONNECTED = 0,
-    
-    /* Connecting to gateway server */
-    CONN_CONNECTING_GATEWAY,
-    
-    CONN_CONNECTED_GATEWAY,
-
-    /* Waiting for gateway login response */
+	CONN_DISCONNECTED = 0,
+	
+	CONN_CONNECTING_GATEWAY,
+	CONN_CONNECTED_GATEWAY,
+	
+	
     CONN_WAIT_GATEWAY_LOGIN,
+    CONN_GATEWAY_LOGIN_SUCCESS,
     CONN_GATEWAY_LOGIN_FAILED,
     
     
@@ -844,7 +784,6 @@ typedef enum {
 
     /* Connection lost, waiting before reconnect */
     CONN_RECONNECTING,
-
     /* Permanent failure / shutting down */
     CONN_CLOSED
 } ConnectionState;
@@ -852,14 +791,24 @@ typedef enum {
 // connection.h or a shared header
 extern int epoll_fd;   // make epoll_fd global, set once in main()
 
+typedef enum {
+    ACTION_NONE,
+    ACTION_CARGO,
+    ACTION_SHIELD,
+    ACTION_HEAL,
+    ACTION_GATHER,
+    ACTION_MAX
+} ActionState;
 
-typedef struct {
+typedef struct Connection {
 	// network
 	int sock;
 	ConnectionState state;
 	PacketStream stream;
 	// authentication
-	AuthInfo auth;
+	ClientAuth auth;
+	
+	ActionState action_state;
 	
 	/*
 	* TODO:
@@ -893,6 +842,7 @@ typedef struct {
 	// server state
 	uint64_t server_time;
 	time_t last_heartbeat;
+	time_t last_tick_time;
 	// login state
 	bool lobby_login;
 	// game server 
@@ -902,7 +852,8 @@ typedef struct {
 	// client configuration
 	AppInfo app;
 	// resources 
-	ResourceStock resources;      // current resources
+	Resources resource;
+	//ResourceStock resources;      // current resources
 	ResourceStock bag_resources;  // consumable resource items
 	ResourceProduction production; // Per-hour production
 	uint64_t resources_last_update;
@@ -913,8 +864,13 @@ typedef struct {
 	// player information 
 	PlayerInfo player;
 	// game system 
+	
+	/*
 	BlackMarket market;
 	BlackMarketBuy buy;
+	*/
+	
+	CargoShip cargo_ship;
 	
 	// resources sending
 	// ResourceTransfer transfer;
@@ -975,6 +931,10 @@ typedef struct {
 	ResourceTransfer transfer;
 	
 	AllianceMemberList alliance_member;
+	
+	bool auto_reconnect;
+	uint32_t reconnect_max_attempts;
+	uint32_t reconnect_attempt;
 } Connection;
 
 /* API */

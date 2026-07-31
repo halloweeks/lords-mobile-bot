@@ -1,5 +1,4 @@
 #include "log.h"
-#include <stdarg.h>
 
 static void log_base(const char *prefix, const char *fmt, va_list args)
 {
@@ -31,3 +30,13 @@ void log_info(const char *fmt, ...)
     log_base("[INFO ] ", fmt, args);
     va_end(args);
 }
+
+#ifdef _DEBUG_ 
+	void log_debug(const char *fmt, ...)
+	{
+		va_list args;
+		va_start(args, fmt);
+		log_base("[DEBUG] ", fmt, args);
+		va_end(args);
+	}
+#endif

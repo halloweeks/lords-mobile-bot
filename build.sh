@@ -10,8 +10,8 @@ fi
 
 cd build
 
-cmake ..
-make -j4
+cmake .. -DDEBUG_LOG=OFF
+make -j$(nproc)
 
 cp ./client $HOME/
 chmod +x $HOME/client

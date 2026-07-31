@@ -4,21 +4,18 @@
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
-
-// For mkdir
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #include "connection.h"
 #include "log.h"
-#include "protocol.h"
 #include "net_rw.h"
 #include "packet_enum.h"
 
-#include "command.h"
+// 
 
 // included mapping for debugging purpose 
-#include "packet_map.h"
+// #include "packet_map.h"
 
 
 #include "map_point.h"
@@ -30,97 +27,22 @@
 
 #include <sys/epoll.h>
 
+
+#include "dispatcher.h"
+
+#include "utility.h"
+
+#include "bot/tick.h"
+
+#include "packet_map.h"
+
 #define BUFFER_SIZE 4096
-
-// debugging purpose 
-void dump_data(const char *filename, const char *str, void *data, size_t size) {
-	(void)str;
-	char name[1024] = {0};
-
-	snprintf(name, sizeof(name), "%s.bin", filename);
-
-	FILE *file = fopen(name, "wb");
-	if (file == NULL) {
-		perror("open failed");
-		return;
-	}
-	if (fwrite(data, 1, size, file) != size) {
-		perror("write failed");
-	}
-	fclose(file);
-
-	printf("file: %s saved\n", name);
-}
-
-void BotTick(Connection *c)
-{
-	if (c->server_time == 0) return;
-	
-	// Connection maintenance
-	HeartbeatTick(c);
-	
-	// Automatic game features
-	BlackMarketTick(c);
-	
-	// 
-	ShieldTick(c);
-	
-	AllianceGiftTick(c);
-	
-	// 
-	// DarknestRallyTick(c);
-	
-	ResourceTransferTick(c);
-	
-}
-
-uint8_t GetVIPLevel(uint32_t vipPoints)
-{
-	if (vipPoints >= 1500000) return 15;
-	if (vipPoints >= 730000)  return 14;
-	if (vipPoints >= 350000)  return 13;
-	if (vipPoints >= 175000)  return 12;
-	if (vipPoints >= 90000)   return 11;
-	if (vipPoints >= 50000)   return 10;
-	if (vipPoints >= 20000)   return 9;
-	if (vipPoints >= 8000)	return 8;
-	if (vipPoints >= 4000)	return 7;
-	if (vipPoints >= 1600)	return 6;
-	if (vipPoints >= 800)	 return 5;
-	if (vipPoints >= 400)	 return 4;
-	if (vipPoints >= 300)	 return 3;
-	if (vipPoints >= 100)	 return 2;
-	
-	return 1;
-}
-
-
-void logger(Connection *c) {
-	
-	for (int i = 0; i < c->alliance_member.count; i++) {
-		AllianceMember *m = &c->alliance_member.member[i];
-		
-		printf("id: %ld, ", m->user_id);
-		// printf("head: %u\n",     m->head);
-		printf("name: %s\n",     m->name);
-		// printf("rank: %u\n",     m->rank);
-		// printf("power: %lu\n",   m->power);
-		// printf("troop_kill_num: %lu\n", m->troop_kill_num);
-		// printf("logout_time: %ld\n", m->logout_time);
-		// printf("white_list_flag: %u\n", m->white_list_flag);
-		// printf("\n");
-	}
-	
-}
 
 int epoll_fd = 0;
 
 void ProcessConnection(Connection *c)
 {
 	PacketStream *s = &c->stream;
-	
-	map_pos_t pos;
-	
 	
 	while (s->read_pos - s->parse_pos >= 4) {
 		s->packet_size = read_u16(s->buffer + s->parse_pos);
@@ -134,279 +56,19 @@ void ProcessConnection(Connection *c)
 			break;
 		}
 		
-		c->sin.offset = 0;
-		c->sin.size = s->packet_size - 4;
-		memcpy(c->sin.data, s->buffer + s->parse_pos + 4, s->packet_size - 4);
+		DispatchPacket(c, s->packet_type, s->buffer + s->parse_pos + 4);
 		
-		switch(s->packet_type) {
-			case _MSG_RESP_LOGINVALIDATE:
-				HandleLoginValidate(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				LOGI("Gateway Login success! Switching to game server\n");
-				
-				// 1. Tear down gateway fd
-				epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
-				close(c->sock);
-				c->sock = -1;
-				
-				// 2. Reset the stream — gateway leftovers are meaningless to game parser
-				memset(&c->stream, 0, sizeof(c->stream));
-				
-				// 3. Open new socket to game server (this sets c->sock internally)
-				if (!ConnectServer(c, c->game_server.addr, c->game_server.port)) {
-					LOGE("Failed to start game server connection\n");
-					c->state = CONN_DISCONNECTED;
-					return;
-				}
-				
-				// 4. Register the NEW fd with epoll, same Connection* as data.ptr
-				if (!epoll_register(epoll_fd, c, EPOLLIN | EPOLLOUT)) {
-					LOGE("Failed to register game socket with epoll\n");
-					close(c->sock);
-					c->sock = -1;
-					c->state = CONN_DISCONNECTED;
-					return;
-				}
-				
-				c->state = CONN_CONNECTING_GAME;
-				return;   // stop parsing — buffer was just reset, don't fall through
-			case _MSG_GAMESERVER_LOGINLOG: 
-				// kind = read_u16(s->buffer + s->parse_pos + 4);
-				LOGI("Game login successful\n");
-				//RequestClientInitOver(c);
-				// ServerInitOver(c);
-				break;
-			case _MSG_LOGIN_LOGINERRORRESP: 
-				RecvLoginError(c, s->buffer + s->parse_pos + 4);
-				
-				// 1. Tear down gateway fd
-				epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
-				close(c->sock);
-				c->sock = -1;
-				
-				// 2. Reset the stream — gateway leftovers are meaningless to game parser
-				memset(&c->stream, 0, sizeof(c->stream));
-				
-				c->state = CONN_DISCONNECTED;
-				// printf("Login error\n");
-				return;
-			case _MSG_CLIENT_LOGINTOLRESP: 
-				// kind = read_i32(s->buffer + s->parse_pos + 4);
-				
-				LOGE("Bootstrap Login failed session expired: %d\n", 0/*kind*/);
-				disconnect(c);
-				return;
-			case _MSG_RESP_ACTIVE: 
-				c->server_time = read_u64(s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_CHATMESSAGE: 
-				RecvChatMessage(c, s->buffer + s->parse_pos + 4);
-				
-				command_handler(c, c->chat.player_name, c->chat.message);
-				
-				if (c->chat.message[0] != c->bot.command_prefix) {
-					printf("[MSG] [%s]: %s\n", c->chat.player_name, c->chat.message);
-				}
-				break;
-			case _MSG_RESP_SOCIAL_DATA: 
-				RequestAllianceGiftInfo(c);
-				
-				RequestRallyList(c);
-				
-				RequestAllianceMemberInfo(c);
-				
-				/*
-				RequestViewChat(
-					c, // Connection *c
-					0, // Channel 0 for world, 1 for guild 
-					0, // Previous message 
-					3, // kind
-					0, // Data id
-					c->server_time + 5
-				);
-				*/
-				
-				// RequestDeleteAllianceGiftBox(c, 0xFFFFFFFF);
-				break;
-			case _MSG_RESP_ITEMINFO: 
-				RecvItemInfo(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				break;
-			case _MSG_RESP_BUFFINFO: 
-				RecvIBuffInfo(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_MARCH_MARCHEVENTDATA:
-				RecvMarchData(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_LOGIN_ROLEINFO: 
-				RecvLoginRoleInfo(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				
-				pos = getTileMapPosbyPointCode(c->player.zone_id, c->player.point_id);
-				
-				LOGI("Character: %s\n", c->player.name);
-				LOGI("Location: K:%u X:%u Y:%u\n", c->player.current_kingdom_id, pos.x, pos.y);
-				LOGI("VIP: %u\n", GetVIPLevel(c->player.vip_point ));
-				LOGI("Might: %lu\n", c->player.power);
-				LOGI("Kills: %lu\n", c->player.kills);
-				LOGI("Gems: %u\n", c->player.gems);
-				break;
-			case _MSG_RESP_UPDATE_RESOURCEAMOUNT: 
-				RecvRefreshResources(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_RESOURCEINFO: 
-				RecvResources(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_BLACKMARKET_DATA: 
-				RecvBlackMarket_Data(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_BLACKMARKET_BUY:
-				RecvBlackMarket_Buy(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_LOGIN_VERIFY_SESSION: 
-				// dump_data("verify_session", "", s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				// printf("_MSG_RESP_LOGIN_VERIFY_SESSION\n");
-				break;
-			case _MSG_RESP_BUILDINGINFO: 
-				RecvAllBuildData(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_MAILINFO: 
-				RecvMailInfo(c, s->buffer + s->parse_pos + 4);
-				
-				command_handler(c, c->mail.sender_name, c->mail.content);
-				
-				if (c->chat.message[0] != c->bot.command_prefix) {
-					printf("[MAIL] [%s]: %s\n", c->mail.sender_name, c->mail.content);
-				}
-				break;
-			case _MSG_RESP_ALLYPOINT: 
-				RecvAllyPoint(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_ALLIANCE_HELP: 
-				printf("_MSG_RESP_ALLIANCE_HELP\n");
-				// RecvAllianceHelp(c, s->buffer + s->parse_pos + 4);
-				break;
-			case 0xB26:
-				RecvAllianceMemberNeedsHelp(c, s->buffer + s->parse_pos + 4);
-				break;
-			case 0x0B23:
-				RecvPendingAllianceMembersNeedHelp(c, s->buffer + s->parse_pos + 4);
-				break;
-			case 0x0B2F: 
-				RecvAllianceGiftInfo(c, s->buffer + s->parse_pos + 4);
-				break;
-			case 0x0b33: 
-				RecvDeleteAllianceGiftBox(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_USEITEM: 
-				RecvUseItem(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				// dump_data("_MSG_RESP_USEITEM", "", s->buffer + s->parse_pos, s->packet_size);
-				break;
-			case 0x0B31: 
-				RecvAllianceGiftOpen(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_BUYITEM: 
-				RecvBuyItem(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				// dump_data("_MSG_RESP_BUYITEM", "", s->buffer + s->parse_pos, s->packet_size);
-				break;
-			case _MSG_RESP_WORLD_TELEPORT_ITEM:
-				// dump_data("_MSG_RESP_WORLD_TELEPORT_ITEM", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_REQUEST_ALLIANCE_INFO:
-				RecvAllianceInfo(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_BUILDINGEVENT: 
-				RecvBuildingQueue(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_UPDATEWATCHTOWER_ADDLINE:
-				RecvUpdateWatchTowerAddLineInfo(c, s->buffer + s->parse_pos + 4);
-				printf("RecvUpdateWatchTowerAddLineInfo()\n");
-				// dump_data("_MSG_RESP_UPDATEWATCHTOWER_ADDLINE", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case 0x0B2B: 
-				RecvRoleUpdateInfo(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_BROCAST_NPC_WAR_BEGIN: 
-				RecvDarknestBroadcast(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_ARMYGROUPINFO_: 
-				RecvArmyGroupInfo(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_WATCHTOWER_LINEDETAIL: 
-				// RecvWatchTowerLineDetail(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_WARHALL_INITLIST: 
-				RecvRallyCountData(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_NPC_WARHALL_UPDATE_LISTELE: 
-				RecvNPCWallHallData(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_NPC_WARHALL_UPDATE_LISTELE", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_NPC_WARHALL_INIT_LISTDETAIL: 
-				RecvNPCWallHallDetail(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_NPC_WARHALL_INIT_LISTDETAIL", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_BROCAST_WAR_BEGIN: 
-				RecvWarBegin(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_WARHALL_UPDATE_LISTDETAIL:
-				RecvWallHallTroop(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_WARHALL_UPDATE_LISTDETAIL", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_WARHALL_UPDATE_LISTELE: 
-				RecvWallHallData(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_WARHALL_UPDATE_LISTELE", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_WARHALL_INIT_LISTDETAIL:
-				RecvWallHallDetail(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_WARHALL_DELETE_LISTELE:
-				RecvWallHallDel(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_WARHALL_END_LISTDETAIL: 
-				RecvWallHallDetailClose(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_JOINED_RALLYDATA: 
-				RecvJoinedRallyData(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_JOINED_RALLYDATA", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_RESEARCHINFO:
-				RecvTechnologyInfo(c, s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				// dump_data("_MSG_RESP_RESEARCHINFO", "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				break;
-			case _MSG_RESP_ADDCONFLICT_LINE: 
-				RecvAddConflictLine(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_HOSPITAL_HOSPITALINFO: 
-				RecvWoundedTroopData(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_UPDATE_MAPINFO_PLUS: 
-				RecvMapInfoPlus(c, s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				break;
-			case _MSG_RESP_SEND_RESHELP: 
-				RecvSHelp(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_RESHELP_HOME: 
-				RecvHelp_Home(c, s->buffer + s->parse_pos + 4);
-				break;
-			case _MSG_RESP_ALLIANCE_MEMBERINFO: 
-				RecvAllianceMemberInfo(c, s->buffer + s->parse_pos + 4);
-				// dump_data("_MSG_RESP_ALLIANCE_MEMBERINFO", "", s->buffer + s->parse_pos + 4, s->packet_size - 4);
-				break;
-			default:
-				/*
-				// Debugging purpose only 
-				LOGI("PACKET TYPE: %s (0x%X), size=%u",
-					get_packet_name(s->packet_type),
-					s->packet_type,
-					s->packet_size
-				);
-				*/
-				
-				/*
-				dump_data(get_packet_name(s->packet_type), "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
-				*/
-				
-				break;
-		}
+		 //#ifdef _DEBUG_
+			// Debugging purpose only 
+			LOGD("PACKET TYPE: %s (0x%X), size=%u\n", 
+				get_packet_name(s->packet_type),
+				s->packet_type,
+				s->packet_size
+			);
 			
+			// dump_data(get_packet_name(s->packet_type), "", s->buffer + s->parse_pos + 4, s->packet_size + 4);
+		// #endif
+		
 		s->parse_pos += s->packet_size;
 	}
 	
@@ -444,7 +106,90 @@ void PrintVersion(void)
         __TIME__);
 }
 
+void ConnectionMaintain(Connection *c)
+{
+	switch (c->state) {
+		case CONN_CONNECTED_GATEWAY:
+			LOGI("Gateway connected\n");
+			RequestGuestLogIn(c);
+			c->state = CONN_WAIT_GATEWAY_LOGIN;
+			
+			// remove epoll out writable , that trigger event continuously 
+			struct epoll_event ev1 = {0};
+			
+			ev1.events = EPOLLIN;
+			ev1.data.ptr = c;
+			
+			if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, c->sock, &ev1) == -1) {
+				LOGE("Failed to remove EPOLLOUT\n");
+			}
+			break;
+		case CONN_CONNECTED_GAME:
+			LOGI("Game server connected\n");
+			RequestLogIn(c);
+			RequestClientInitOver(c);
+			LOGI("Sending game login\n");
+			LOGI("Sending client init over\n");
+			// c->state = CONN_WAIT_GAME_LOGIN;
+			c->state = CONN_CONNECTED;
+			
+			c->action_state = 1; // start schedule tasks
+			
+			// remove epoll out writable , that trigger event continuously 
+			struct epoll_event ev = {0};
+			
+			ev.events = EPOLLIN;
+			ev.data.ptr = c;
+			
+			if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, c->sock, &ev) == -1) {
+				LOGE("Failed to remove EPOLLOUT\n");
+			}
+			
+			break;
+		case CONN_GATEWAY_LOGIN_SUCCESS: 
+			// 1. Tear down gateway fd
+			epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
+			close(c->sock);
+			c->sock = -1;
+			
+			// 2. Reset the stream — gateway leftovers are meaningless to game parser
+			memset(&c->stream, 0, sizeof(c->stream));
+			
+			// 3. Open new socket to game server (this sets c->sock internally)
+			if (!ConnectServer(c, c->game_server.addr, c->game_server.port)) {
+				LOGE("Failed to start game server connection\n");
+				c->state = CONN_DISCONNECTED;
+				return;
+			}
+			
+			c->state = CONN_CONNECTING_GAME;
+				
+			// 4. Register the NEW fd with epoll, same Connection* as data.ptr
+			if (!epoll_register(epoll_fd, c, EPOLLIN | EPOLLOUT)) {
+				LOGE("Failed to register game socket with epoll\n");
+				close(c->sock);
+				c->sock = -1;
+				c->state = CONN_DISCONNECTED;
+				return;
+			}
+			
+			break;
+		case CONN_GATEWAY_LOGIN_FAILED: 
+			epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
+			close(c->sock);
+			c->sock = -1;
+			break;
+		default:
+			break; // connected / logging in / running — nothing to do here 
+    }
+}
+
+// For web based GUI currently under construction 
+// #include "bot/http_server.h"
+
 int main(int argc, const char *argv[]) {
+	DispatcherInit();
+	
 	if (argc < 2) {
 		PrintUsage();
 		return 0;
@@ -459,12 +204,12 @@ int main(int argc, const char *argv[]) {
 		mkdir("configs", 0775);
 		
 		if (!CreateDefaultProgramConfig("program.cfg")) {
-			LOGE("Failed to create `program.cfg`\n");
+			LOGE("Failed to create 'program.cfg'\n");
 			return EXIT_FAILURE;
 		}
 		
 		if (!CreateDefaultConfig("configs/bank123.cfg")) {
-			LOGE("Failed to create `configs/bank123.cfg`\n");
+			LOGE("Failed to create 'configs/bank123.cfg'\n");
 			return EXIT_FAILURE;
 		}
 		
@@ -498,6 +243,8 @@ int main(int argc, const char *argv[]) {
 	
 	LOGI("Found %zu bot configuration\n", program.bot_count);
 	
+	size_t memory_used = program.bot_count * sizeof(Connection);
+	
 	Connection *client = calloc(program.bot_count, sizeof(Connection));
 	
 	if (client == NULL) {
@@ -505,7 +252,12 @@ int main(int argc, const char *argv[]) {
 		return 1;
 	}
 	
-	LOGI("Allocated %zu bot configurations\n", program.bot_count);
+	// Display the total memory allocated for all bot connections.
+	if (memory_used >= 1024 * 1024) {
+		LOGI("Allocated %zu bot configurations (%.2f MB)\n", program.bot_count, (double)memory_used / (1024 * 1024));
+	} else {
+		LOGI("Allocated %zu bot configurations (%.2f KB)\n", program.bot_count, (double)memory_used / 1024);
+	}
 	
 	for (size_t i = 0; i < program.bot_count; i++) {
 		if (!LoadConfig(&client[i], program.config_path[i])) {
@@ -525,6 +277,8 @@ int main(int argc, const char *argv[]) {
 	
 	LOGI("data path: '%s'\n", program.data_path);
 	
+	LOGI("Client version: %u.%u.%u\n", program.version_major, program.version_minor, program.version_patch);
+	
 	/* Create epoll */
 	epoll_fd = epoll_create1(0);
 	
@@ -533,6 +287,8 @@ int main(int argc, const char *argv[]) {
 		free(client);
 		return EXIT_FAILURE;
 	}
+	
+	// HttpServerInit(epoll_fd, 8273);
 	
 	struct epoll_event events[64];
 	
@@ -565,33 +321,32 @@ int main(int argc, const char *argv[]) {
 			if (errno == EINTR)
 				continue;
 			
+			/* Unexpected error. */
 			LOGE("epoll_wait() failed\n");
 			break;
 		}
 		
-		/* 15-second timeout */
-		for (size_t i = 0; i < program.bot_count; i++) {
-			BotTick(&client[i]);
-		}
-		
 		for (int i = 0; i < n; i++) {
+			/*
+			if (events[i].data.fd == http_server_fd) {
+				HttpServerAccept();
+				continue;
+			}
+			*/
+			
 			Connection *c = events[i].data.ptr;
 			
-			/* Socket error */
 			if (events[i].events & (EPOLLERR | EPOLLHUP)) {
 				LOGE("Socket disconnected\n");
 				
+				epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
 				close(c->sock);
 				c->sock = -1;
 				c->state = CONN_DISCONNECTED;
 				continue;
 			}
 			
-			/* Non-blocking connect completed */
-			if ((events[i].events & EPOLLOUT) && 
-				(c->state == CONN_CONNECTING_GATEWAY ||
-				c->state == CONN_CONNECTING_GAME)) {
-				
+			if (events[i].events & EPOLLOUT) {
 				int err = 0;
 				socklen_t len = sizeof(err);
 				
@@ -603,6 +358,7 @@ int main(int argc, const char *argv[]) {
 					
 					LOGE("Connection failed\n");
 					
+					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
 					close(c->sock);
 					c->sock = -1;
 					c->state = CONN_DISCONNECTED;
@@ -610,17 +366,18 @@ int main(int argc, const char *argv[]) {
 					continue;
 				}
 				
-				if (c->state == CONN_CONNECTING_GATEWAY) {
-					LOGI("Gateway connected\n");
-					RequestGuestLogIn(c);
-					c->state = CONN_WAIT_GATEWAY_LOGIN;
-				} else {
-					LOGI("Game server connected\n");
-					RequestLogIn(c);
-					RequestClientInitOver(c);
-					c->state = CONN_WAIT_GAME_LOGIN;
+				switch (c->state) {
+					case CONN_CONNECTING_GATEWAY:
+						c->state = CONN_CONNECTED_GATEWAY;
+						break;
+					case CONN_CONNECTING_GAME:
+						c->state = CONN_CONNECTED_GAME;
+						break;
+					default:
+						break;
 				}
 			}
+			
 			
 			/* Incoming packets */
 			if (events[i].events & EPOLLIN) {
@@ -632,6 +389,7 @@ int main(int argc, const char *argv[]) {
 				if (ret <= 0) {
 					LOGE("Connection closed");
 					
+					epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->sock, NULL);
 					close(c->sock);
 					c->sock = -1;
 					c->state = CONN_DISCONNECTED;
@@ -645,6 +403,15 @@ int main(int argc, const char *argv[]) {
 			}
 		}
 		
+		for (size_t i = 0; i < program.bot_count; i++) {
+			Connection *c = &client[i];
+			
+			ConnectionMaintain(c);
+			
+			if (c->state == CONN_CONNECTED) {
+				BotTick(c);
+			}
+		}
 		
 	}
 	

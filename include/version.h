@@ -13,6 +13,6 @@
  *   MINOR - New features with backward compatibility.
  *   PATCH - Bug fixes and small improvements.
  */
-#define VERSION "1.0.2"
+#define VERSION "1.1.1"
 
 #endif /* VERSION_H */
