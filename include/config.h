@@ -27,7 +27,13 @@ typedef struct {
 	uint32_t reconnect_max_attempts;
 	uint32_t reconnect_attempt;
 	
-	
+	// Holy shit added
+	bool webgui_enabled;
+	char webgui_host[16];
+	int  webgui_port;
+	bool webgui_auth;
+	char webgui_user[32];
+	char webgui_pass[32];
 } ProgramConfig;
 
 bool CreateDefaultConfig(const char *filename);

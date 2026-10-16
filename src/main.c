@@ -7,6 +7,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <pthread.h>
+
+// For web based graphical interface 
+#include "webgui.h"
+
 #include "connection.h"
 #include "log.h"
 #include "net_rw.h"
@@ -197,7 +202,6 @@ void ConnectionMaintain(Connection *c)
 			c->sock = -1;
 			break;
 		case CONN_DISCONNECTED:
-			break; // No auto reconnect 
 			if (time(NULL) >= c->reconnect_time) {
 				if (c->reconnect_max_attempts != 0 &&
 					c->reconnect_attempt >= c->reconnect_max_attempts) {
@@ -235,8 +239,7 @@ void ConnectionMaintain(Connection *c)
     }
 }
 
-// For web based GUI currently under construction 
-// #include "bot/http_server.h"
+#define MAX_BOTS 20
 
 int main(int argc, const char *argv[]) {
 	DispatcherInit();
@@ -291,13 +294,13 @@ int main(int argc, const char *argv[]) {
 	if (program.data_path[0] == '\0') {
 		LOGE("Undefined data path!\n");
 		return EXIT_FAILURE;
-	}
+	}	
 	
 	LOGI("Found %zu bot configuration\n", program.bot_count);
 	
 	size_t memory_used = program.bot_count * sizeof(Connection);
 	
-	Connection *client = calloc(program.bot_count, sizeof(Connection));
+	Connection *client = calloc(program.bot_count + MAX_BOTS, sizeof(Connection));
 	
 	if (client == NULL) {
 		LOGE("Failed to allocate memory for %zu bot configurations\n", program.bot_count);
@@ -335,6 +338,40 @@ int main(int argc, const char *argv[]) {
 		
 		// LOGI("Loaded bot configuration: %s\n", program.config_path[i]);
 	}
+	
+	
+	for (int i = program.bot_count; i < (program.bot_count + MAX_BOTS); i++) {
+		client[i].state = CONN_RESERVED_NEW;
+	}
+	
+	WebGuiContext webgui_ctx = {0};
+	
+	if (program.webgui_enabled) {
+		webgui_ctx.client = client;
+		webgui_ctx.client_count = program.bot_count;
+		webgui_ctx.port = program.webgui_port;
+		
+		webgui_ctx.auth_enabled = program.webgui_auth;
+		
+		snprintf(webgui_ctx.username, sizeof(webgui_ctx.username), "%s", program.webgui_user);
+		snprintf(webgui_ctx.password, sizeof(webgui_ctx.password), "%s", program.webgui_pass);
+		
+		
+		
+		snprintf(
+			webgui_ctx.host,
+			sizeof(webgui_ctx.host),
+			"%s",
+			program.webgui_host
+		);
+		
+		if (!WebGuiStart(&webgui_ctx)) {
+			LOGE("Failed to start Web GUI\n");
+		}
+	}
+	
+	
+	
 	
 	LOGI("data path: '%s'\n", program.data_path);
 	
@@ -473,6 +510,7 @@ int main(int argc, const char *argv[]) {
 		
 	}
 	
+	WebGuiStop();
 	free(client);
 	return 0;
 }

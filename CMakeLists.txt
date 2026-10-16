@@ -15,6 +15,7 @@ add_executable(client
     src/config.c
     src/dispatcher.c
     src/utility.c
+    src/webgui.c
     
     src/protocol/login.c
     src/protocol/chat.c
@@ -50,7 +51,15 @@ if(DEBUG_LOG)
     target_compile_definitions(client PRIVATE _DEBUG_)
 endif()
 
-target_include_directories(client PRIVATE include)
+# Embed webgui/index.html into the binary (served for "/")
+file(READ ${CMAKE_SOURCE_DIR}/webgui/index.html WEBGUI_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," WEBGUI_BYTES "${WEBGUI_HEX}")
+file(WRITE ${CMAKE_BINARY_DIR}/webgui_page.h
+     "static const unsigned char webgui_page[] = {${WEBGUI_BYTES}};\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS webgui/index.html)
 
-target_link_libraries(client PRIVATE m)
+target_include_directories(client PRIVATE include ${CMAKE_BINARY_DIR})
+
+find_package(Threads REQUIRED)
+target_link_libraries(client PRIVATE m Threads::Threads)
 

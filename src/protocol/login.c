@@ -30,7 +30,9 @@ void RequestGuestLogIn(Connection *c)
     write_u16(c->data + c->size, c->app.version_patch);
     c->size += 2;
     
-    // Value 1
+    // Device type
+    // Android    = 1 
+    // Desktop    = 9 
     write_u8(c->data + c->size, 1);
     c->size += 1;
     
@@ -139,6 +141,12 @@ void RecvLoginValidate(Connection *c, const uint8_t *data)
 
 void RecvLoginError(Connection *c, const uint8_t *data) {
 	uint8_t kind = read_u8(data);
+	
+	if (kind == 8) {
+		c->state = CONN_DISCONNECTED;
+		LOGE("HUHHHHHHHHHHHHH\n");
+		return;
+	}
 	
 	if (kind == 110) {
 		// [ERROR] Client version outdated. Required: 2.197.309

@@ -670,6 +670,44 @@ ProgramConfig LoadProgramConfig(const char *filepath)
 			continue;
 		}
 		
+		// Load Web Gui Configuration 
+		if (strcmp(key, "webgui.enabled") == 0) {
+			program.webgui_enabled = (strncmp(value, "true", 4) == 0);
+			continue;
+		}
+		
+		if (strcmp(key, "webgui.host") == 0) {
+			if (strcmp(value, "localhost") == 0) {
+				strcpy(program.webgui_host, "127.0.0.1");
+				continue;
+			}
+			
+			snprintf(program.webgui_host, sizeof(program.webgui_host), "%s", value);
+			// strncpy(program.webgui_host, value, 16);
+			continue;
+		}
+		
+		if (strcmp(key, "webgui.port") == 0) {
+			program.webgui_port = (uint16_t)strtoul(value, NULL, 10);
+			continue;
+		}
+		
+		if (strcmp(key, "webgui.auth") == 0) {
+			program.webgui_auth = (strncmp(value, "true", 4) == 0);
+			continue;
+		}
+		
+		// Username 
+		if (strcmp(key, "webgui.user") == 0) {
+			snprintf(program.webgui_user, sizeof(program.webgui_user), "%s", value);
+			continue;
+		}
+		
+		// Password 
+		if (strcmp(key, "webgui.pass") == 0) {
+			snprintf(program.webgui_pass, sizeof(program.webgui_pass), "%s", value);
+			continue;
+		}
 		
     }
     
@@ -702,8 +740,8 @@ bool CreateDefaultProgramConfig(const char *filename)
 
 		"# Game client version\n"
 		"client.version_major = 2\n"
-		"client.version_minor = 197\n"
-		"client.version_patch = 308\n"
+		"client.version_minor = 205\n"
+		"client.version_patch = 318\n"
 		"client.language_code = 1\n\n"
 		
 		"# Auto reconnect bot after network disconnection\n"
@@ -719,6 +757,21 @@ bool CreateDefaultProgramConfig(const char *filename)
 		"# Load one or more bot configuration files.\n"
 		"include = configs/bank123.cfg\n"
 		"# include = configs/farm01.cfg\n"
+		
+		"\n"
+		
+		"# Web GUI server\n"
+		"# Use 127.0.0.1 for local access only.\n"
+		"# Use 0.0.0.0 to allow connections through available network interfaces,\n"
+		"# enabling remote access from other devices, subject to firewall rules.\n"
+		"# Remote access introduces security risks. Use strong authentication\n"
+		"# and appropriate network security measures before exposing the GUI.\n"
+		"webgui.enabled = false\n"
+		"webgui.host    = 127.0.0.1\n"
+		"webgui.port    = 3370\n"
+		"webgui.auth    = true\n"
+		"webgui.user    = admin\n"
+		"webgui.pass    = change-me\n"
 	);
 
 	fclose(fp);

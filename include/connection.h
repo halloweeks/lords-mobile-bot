@@ -714,7 +714,9 @@ typedef enum {
     /* Connection lost, waiting before reconnect */
     CONN_RECONNECTING,
     /* Permanent failure / shutting down */
-    CONN_CLOSED
+    CONN_CLOSED,
+    
+    CONN_RESERVED_NEW
 } ConnectionState;
 
 // connection.h or a shared header
