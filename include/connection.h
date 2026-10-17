@@ -714,9 +714,7 @@ typedef enum {
     /* Connection lost, waiting before reconnect */
     CONN_RECONNECTING,
     /* Permanent failure / shutting down */
-    CONN_CLOSED,
-    
-    CONN_RESERVED_NEW
+    CONN_CLOSED
 } ConnectionState;
 
 // connection.h or a shared header
@@ -869,6 +867,9 @@ typedef struct Connection {
 	uint32_t reconnect_max_attempts;
 	uint32_t reconnect_attempt;
 	time_t reconnect_time;
+	
+	// true = this bot should be connected (set by autostart / Web GUI start)
+	bool enabled;
 	
 	BankData bank_data;
 } Connection;

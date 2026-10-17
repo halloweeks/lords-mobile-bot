@@ -8,9 +8,8 @@
 #include <sys/types.h>
 
 #include <pthread.h>
-
-// For web based graphical interface 
 #include "webgui.h"
+#include "bots.h"
 
 #include "connection.h"
 #include "log.h"
@@ -41,7 +40,7 @@
 
 #define BUFFER_SIZE 4096
 
-int epoll_fd = 0;
+int epoll_fd = -1;
 
 void ProcessConnection(Connection *c)
 {
@@ -102,7 +101,7 @@ void PrintUsage(void)
 		"Lords Mobile Bot\n"
 		"\n"
 		"Usage:\n"
-		"  client <config_file>         Load and start the bot using the specified configuration file.\n"
+		"  client [config_file]         Load and start the bots (default: program.cfg, created on first run).\n"
 		"  client --create-config, -c   Create a default configuration file.\n"
 		"  client --help, -h            Display this help message.\n"
 		"  client --version, -v         Display version information.\n"
@@ -202,7 +201,7 @@ void ConnectionMaintain(Connection *c)
 			c->sock = -1;
 			break;
 		case CONN_DISCONNECTED:
-			if (time(NULL) >= c->reconnect_time) {
+			if (c->enabled && time(NULL) >= c->reconnect_time) {
 				if (c->reconnect_max_attempts != 0 &&
 					c->reconnect_attempt >= c->reconnect_max_attempts) {
 					LOGE("Maximum reconnect attempts reached\n");
@@ -227,7 +226,7 @@ void ConnectionMaintain(Connection *c)
 					}
 					
 					c->state = CONN_CONNECTING_GATEWAY;
-					LOGI("Reconnecting gateway server!\n");
+					LOGI("Connecting gateway server!\n");
 				} else {
 					LOGE("Failed to reconnect gateway\n");
 					c->reconnect_time = time(NULL) + 15;
@@ -239,25 +238,23 @@ void ConnectionMaintain(Connection *c)
     }
 }
 
-#define MAX_BOTS 20
+// For web based GUI currently under construction 
+// #include "bot/http_server.h"
 
 int main(int argc, const char *argv[]) {
 	DispatcherInit();
 	
-	if (argc < 2) {
+	const char *arg = argc >= 2 ? argv[1] : "";
+	
+	if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
 		PrintUsage();
 		return 0;
 	}
 	
-	if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-		PrintUsage();
-		return 0;
-	}
-	
-	if (strcmp(argv[1], "--create-config") == 0 || strcmp(argv[1], "-c") == 0) {
+	if (strcmp(arg, "--create-config") == 0 || strcmp(arg, "-c") == 0) {
 		mkdir("configs", 0775);
 		
-		if (!CreateDefaultProgramConfig("program.cfg")) {
+		if (!CreateDefaultProgramConfig("program.cfg", true)) {
 			LOGE("Failed to create 'program.cfg'\n");
 			return EXIT_FAILURE;
 		}
@@ -273,105 +270,56 @@ int main(int argc, const char *argv[]) {
 		return EXIT_SUCCESS;
 	}
 	
-	if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
+	if (strcmp(arg, "--version") == 0 || strcmp(arg, "-v") == 0) {
 		PrintVersion();
 		return 0;
 	}
 	
-	if (argc != 2) {
-        printf("Usage: %s <program.cfg>\n", argv[0]);
+	if (argc > 2) {
+        printf("Usage: %s [program.cfg]\n", argv[0]);
         return EXIT_FAILURE;
     }
 	
-	// Load main program configuration file 
-	ProgramConfig program = LoadProgramConfig(argv[1]);
+	const char *program_path = argc == 2 ? argv[1] : "program.cfg";
 	
-	if (program.bot_count == 0) {
-		LOGE("No bot configurations found\n");
+	// First run: no program.cfg yet. Create one so the Web GUI can start
+	// and bots can be added from the browser.
+	if (argc < 2 && access(program_path, F_OK) != 0) {
+		mkdir("configs", 0775);
+		
+		if (!CreateDefaultProgramConfig(program_path, false)) {
+			LOGE("Failed to create '%s'\n", program_path);
+			return EXIT_FAILURE;
+		}
+		
+		LOGI("No configuration found, created '%s'\n", program_path);
+	}
+	
+	// Load main program configuration file 
+	ProgramConfig program = LoadProgramConfig(program_path);
+	
+	if (program.bot_count == 0 && !program.webgui_enabled) {
+		LOGE("No bot configurations found in '%s' (set webgui.enabled = true to add bots from the browser)\n", program_path);
 		return 1;
 	}
 	
 	if (program.data_path[0] == '\0') {
 		LOGE("Undefined data path!\n");
 		return EXIT_FAILURE;
-	}	
-	
-	LOGI("Found %zu bot configuration\n", program.bot_count);
-	
-	size_t memory_used = program.bot_count * sizeof(Connection);
-	
-	Connection *client = calloc(program.bot_count + MAX_BOTS, sizeof(Connection));
-	
-	if (client == NULL) {
-		LOGE("Failed to allocate memory for %zu bot configurations\n", program.bot_count);
-		return 1;
 	}
 	
-	// Display the total memory allocated for all bot connections.
-	if (memory_used >= 1024 * 1024) {
-		LOGI("Allocated %zu bot configurations (%.2f MB)\n", program.bot_count, (double)memory_used / (1024 * 1024));
-	} else {
-		LOGI("Allocated %zu bot configurations (%.2f KB)\n", program.bot_count, (double)memory_used / 1024);
-	}
+	LOGI("Found %u bot configuration\n", (unsigned)program.bot_count);
+	
+	BotList bots;
+	BotsInit(&bots, &program, program_path);
 	
 	for (size_t i = 0; i < program.bot_count; i++) {
-		if (!LoadConfig(&client[i], program.config_path[i])) {
+		if (!BotsLoad(&bots, program.config_path[i])) {
 			LOGE("Failed to load bot configuration: %s\n", program.config_path[i]);
-			free(client);
+			BotsDestroy(&bots);
 			return EXIT_FAILURE;
 		}
-		
-		strcpy(client[i].bot.data_path, program.data_path);
-		
-		client[i].app.version_major = program.version_major;
-		client[i].app.version_minor = program.version_minor;
-		client[i].app.version_patch = program.version_patch;
-		client[i].app.language_code = program.language_code;
-		
-		strcpy(client[i].gateway_server.addr, program.server_addr);
-		client[i].gateway_server.port = program.server_port;
-		
-		client[i].reconnect_max_attempts = program.reconnect_max_attempts;
-		client[i].reconnect_attempt      = 0;
-		
-		client[i].state = CONN_DISCONNECTED;
-		
-		// LOGI("Loaded bot configuration: %s\n", program.config_path[i]);
 	}
-	
-	
-	for (int i = program.bot_count; i < (program.bot_count + MAX_BOTS); i++) {
-		client[i].state = CONN_RESERVED_NEW;
-	}
-	
-	WebGuiContext webgui_ctx = {0};
-	
-	if (program.webgui_enabled) {
-		webgui_ctx.client = client;
-		webgui_ctx.client_count = program.bot_count;
-		webgui_ctx.port = program.webgui_port;
-		
-		webgui_ctx.auth_enabled = program.webgui_auth;
-		
-		snprintf(webgui_ctx.username, sizeof(webgui_ctx.username), "%s", program.webgui_user);
-		snprintf(webgui_ctx.password, sizeof(webgui_ctx.password), "%s", program.webgui_pass);
-		
-		
-		
-		snprintf(
-			webgui_ctx.host,
-			sizeof(webgui_ctx.host),
-			"%s",
-			program.webgui_host
-		);
-		
-		if (!WebGuiStart(&webgui_ctx)) {
-			LOGE("Failed to start Web GUI\n");
-		}
-	}
-	
-	
-	
 	
 	LOGI("data path: '%s'\n", program.data_path);
 	
@@ -382,31 +330,32 @@ int main(int argc, const char *argv[]) {
 	
 	if (epoll_fd == -1) {
 		LOGE("Failed to create epoll instance\n");
-		free(client);
+		BotsDestroy(&bots);
 		return EXIT_FAILURE;
 	}
 	
 	struct epoll_event events[64];
 	
-	/* Start connecting every bot */
-	for (size_t i = 0; i < program.bot_count; i++) {
-		if (ConnectServer(&client[i], program.server_addr, program.server_port)) {
-			client[i].state = CONN_CONNECTING_GATEWAY;
+	/* Bots with enabled=true are connected by ConnectionMaintain() below. */
+	
+	WebGuiContext webgui_ctx = {0};
+	
+	if (program.webgui_enabled) {
+		webgui_ctx.bots = &bots;
+		webgui_ctx.port = program.webgui_port;
+		webgui_ctx.auth_enabled = program.webgui_auth;
+		
+		snprintf(webgui_ctx.username, sizeof(webgui_ctx.username), "%s", program.webgui_user);
+		snprintf(webgui_ctx.password, sizeof(webgui_ctx.password), "%s", program.webgui_pass);
+		snprintf(webgui_ctx.host, sizeof(webgui_ctx.host), "%s", program.webgui_host);
+		
+		if (!WebGuiStart(&webgui_ctx)) {
+			LOGE("Failed to start Web GUI\n");
 			
-			struct epoll_event ev = {0};
-			
-			ev.events = EPOLLIN | EPOLLOUT;
-			ev.data.ptr = &client[i];
-			
-			if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client[i].sock, &ev) == -1) {
-				LOGE("Failed to register socket with epoll\n");
-				close(client[i].sock);
-				continue;
+			if (bots.count == 0) {
+				BotsDestroy(&bots);
+				return EXIT_FAILURE;
 			}
-			
-			LOGI("Connecting gateway server!\n");
-		} else {
-			LOGE("Failed to start gateway connection for bot: %s\n", program.config_path[i]);
 		}
 	}
 	
@@ -422,8 +371,17 @@ int main(int argc, const char *argv[]) {
 			break;
 		}
 		
+		// The Web GUI thread may add/stop/remove bots while we wait above,
+		// so everything below runs with the bot list locked.
+		BotsLock(&bots);
+		
 		for (int i = 0; i < n; i++) {
 			Connection *c = events[i].data.ptr;
+			
+			// Event for a bot that was stopped or removed from the Web GUI
+			if (c->sock < 0) {
+				continue;
+			}
 			
 			if (events[i].events & (EPOLLERR | EPOLLHUP)) {
 				LOGE("Socket disconnected\n");
@@ -498,8 +456,8 @@ int main(int argc, const char *argv[]) {
 			}
 		}
 		
-		for (size_t i = 0; i < program.bot_count; i++) {
-			Connection *c = &client[i];
+		for (size_t i = 0; i < bots.count; i++) {
+			Connection *c = bots.bot[i];
 			
 			ConnectionMaintain(c);
 			
@@ -508,9 +466,11 @@ int main(int argc, const char *argv[]) {
 			}
 		}
 		
+		BotsReap(&bots);
+		BotsUnlock(&bots);
 	}
 	
 	WebGuiStop();
-	free(client);
+	BotsDestroy(&bots);
 	return 0;
 }

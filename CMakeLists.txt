@@ -16,6 +16,7 @@ add_executable(client
     src/dispatcher.c
     src/utility.c
     src/webgui.c
+    src/bots.c
     
     src/protocol/login.c
     src/protocol/chat.c

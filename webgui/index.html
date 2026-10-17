@@ -5,67 +5,182 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lords Mobile Bot</title>
 <style>
-:root{--bg:#0b1220;--panel:#111a2e;--line:#22304d;--text:#dde6f5;--muted:#8696b3;--ok:#34d399;--warn:#fbbf24}
+:root{--bg:#0b1220;--panel:#111a2e;--line:#22304d;--text:#dde6f5;--muted:#8696b3;--accent:#3b82f6;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
 *{box-sizing:border-box}
 body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
 main{max-width:900px;margin:auto}
-h1{margin:0 0 16px}
+h1{margin:0}
 h2{margin:0 0 12px;font-size:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px;overflow-x:auto}
 table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line)}
+th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-weight:500}
+td.actions{text-align:right}
 .muted{color:var(--muted)}
 .ok{color:var(--ok)}
 .warn{color:var(--warn)}
+.bad{color:var(--bad)}
+label{display:block;color:var(--muted);font-size:13px;margin:12px 0 4px}
+input,select{width:100%;padding:9px 11px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;font:inherit}
+input:focus,select:focus{outline:none;border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 16px}
+button{padding:8px 14px;background:var(--accent);color:#fff;border:0;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+button.danger{background:transparent;color:var(--bad);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.sm{padding:4px 10px;font-size:13px}
+#msg{min-height:20px;margin:8px 0 0}
 </style>
 </head>
 <body>
 <main>
-  <h1>Lords Mobile Bot</h1>
-  <div class="card">
-    <h2>Bots <span class="muted" id="summary"></span></h2>
-    <table>
-      <thead><tr><th>Name</th><th>Status</th></tr></thead>
-      <tbody id="bots"><tr><td colspan="2" class="muted">Loading...</td></tr></tbody>
-    </table>
+  <div class="top">
+    <h1>Lords Mobile Bot</h1>
+    <div>
+      <button id="startAll">Start all</button>
+      <button id="stopAll" class="ghost">Stop all</button>
+    </div>
   </div>
-  <p class="muted" id="updated"></p>
+
+  <div class="card">
+    <h2>Accounts <span class="muted" id="summary"></span></h2>
+    <table>
+      <thead><tr><th>Account</th><th>Status</th><th></th></tr></thead>
+      <tbody id="bots"></tbody>
+    </table>
+    <p class="muted" id="updated"></p>
+  </div>
+
+  <div class="card">
+    <h2>Add account</h2>
+    <form id="addForm" autocomplete="off">
+      <div class="grid">
+        <div><label for="igg_id">IGG ID</label>
+          <input id="igg_id" name="igg_id" inputmode="numeric" required></div>
+        <div><label for="device_uuid">Device ID</label>
+          <input id="device_uuid" name="device_uuid" required></div>
+        <div><label for="access_key">Access key</label>
+          <input id="access_key" name="access_key" type="password" required></div>
+        <div><label for="device_type">Device type</label>
+          <select id="device_type" name="device_type">
+            <option value="1">Android</option>
+            <option value="9">Desktop</option>
+          </select></div>
+        <div><label for="admin_name">Admin player name (optional)</label>
+          <input id="admin_name" name="admin_name" maxlength="12"></div>
+      </div>
+      <p class="muted">Saved to <code>configs/&lt;IGG ID&gt;.cfg</code> and listed in <code>program.cfg</code>. New accounts stay stopped until you press Start.</p>
+      <button type="submit" id="addBtn">Add account</button>
+      <div id="msg" class="bad" role="status"></div>
+    </form>
+  </div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 
-async function api(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
+async function call(path, params) {
+  const opts = { cache: 'no-store' };
+  if (params) {
+    opts.method = 'POST';
+    opts.headers = { 'X-Requested-With': 'webgui' };
+    opts.body = new URLSearchParams(params);
+  }
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+  return data;
 }
 
-function td(text, cls) {
-  const e = document.createElement('td');
-  e.textContent = text;
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined) e.textContent = text;
   if (cls) e.className = cls;
   return e;
 }
 
-async function refresh() {
+function button(text, cls, onclick) {
+  const b = el('button', text, 'sm ' + cls);
+  b.onclick = onclick;
+  return b;
+}
+
+/* Runs a POST, shows any error, refreshes the table. Returns true on success. */
+async function act(path, params) {
+  let ok = true;
   try {
-    const { bots } = await api('/api/status');
-    const rows = bots.map(b => {
-      const tr = document.createElement('tr');
-      tr.append(td(b.name), td(b.state, b.online ? 'ok' : 'warn'));
-      return tr;
-    });
+    await call(path, params);
+    $('msg').textContent = '';
+  } catch (e) {
+    $('msg').textContent = e.message;
+    ok = false;
+  }
+  await load();
+  return ok;
+}
+
+function row(b) {
+  const label = b.name || 'IGG ' + b.igg_id;
+  const tr = el('tr');
+  const who = el('td', label);
+  if (b.name) who.append(el('span', '  #' + b.igg_id, 'muted'));
+
+  const status = b.enabled
+    ? el('td', b.state, b.online ? 'ok' : 'warn')
+    : el('td', 'Stopped', 'muted');
+
+  const actions = el('td', undefined, 'actions');
+  actions.append(
+    b.enabled
+      ? button('Stop', 'ghost', () => act('/api/stop', { igg_id: b.igg_id }))
+      : button('Start', '', () => act('/api/start', { igg_id: b.igg_id })),
+    ' ',
+    button('Delete', 'danger', () => {
+      if (confirm('Delete ' + label + '? Its config file is kept as .removed.'))
+        act('/api/delete', { igg_id: b.igg_id });
+    })
+  );
+
+  tr.append(who, status, actions);
+  return tr;
+}
+
+async function load() {
+  try {
+    const { bots } = await call('/api/status');
+    const rows = bots.map(row);
+    if (!rows.length) {
+      const tr = el('tr');
+      const td = el('td', 'No accounts yet. Add one below.', 'muted');
+      td.colSpan = 3;
+      tr.append(td);
+      rows.push(tr);
+    }
     $('bots').replaceChildren(...rows);
     $('summary').textContent = `(${bots.filter(b => b.online).length}/${bots.length} online)`;
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
     $('updated').textContent = 'Connection error: ' + e.message;
   }
-  setTimeout(refresh, 3000);
 }
 
-refresh();
+async function poll() {
+  await load();
+  setTimeout(poll, 3000);
+}
+
+$('startAll').onclick = () => act('/api/start', {});
+$('stopAll').onclick = () => act('/api/stop', {});
+
+$('addForm').onsubmit = async e => {
+  e.preventDefault();
+  $('addBtn').disabled = true;
+  const ok = await act('/api/add', Object.fromEntries(new FormData(e.target)));
+  if (ok) e.target.reset();
+  $('addBtn').disabled = false;
+};
+
+poll();
 </script>
 </body>
 </html>

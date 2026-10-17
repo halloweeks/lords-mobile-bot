@@ -33,7 +33,7 @@ void RequestGuestLogIn(Connection *c)
     // Device type
     // Android    = 1 
     // Desktop    = 9 
-    write_u8(c->data + c->size, 1);
+    write_u8(c->data + c->size, c->auth.device_type);
     c->size += 1;
     
     // write language code

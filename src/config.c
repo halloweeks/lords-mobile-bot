@@ -20,6 +20,10 @@
 #include <stdlib.h>
 
 #include <ctype.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "log.h"
 #include "connection.h"
@@ -190,6 +194,18 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 	if (strcmp(key, "account.access_key") == 0) {
 		strcpy(c->auth.session, value);
 		c->auth.session_len = (uint16_t)strlen(c->auth.session);
+		return true;
+	}
+	
+	// 1 = Android (default), 9 = Desktop
+	if (strcmp(key, "account.device_type") == 0) {
+		unsigned long type = strtoul(value, NULL, 10);
+		
+		if (type < 1 || type > 255) {
+			return false;
+		}
+		
+		c->auth.device_type = (uint8_t)type;
 		return true;
 	}
 	
@@ -491,6 +507,9 @@ static bool ParserConfig(Connection *c, const char *key, const char *value) {
 
 bool LoadConfig(Connection *c, const char *filename)
 {
+	// default when the file has no account.device_type
+	c->auth.device_type = 1;
+	
 	FILE *fp = fopen(filename, "r");
 	
 	if (!fp) {
@@ -575,6 +594,9 @@ ProgramConfig LoadProgramConfig(const char *filepath)
 {
 	ProgramConfig program = {0};
 	
+	// bots connect on startup unless the file says otherwise
+	program.autostart = true;
+	
 	FILE *fp = fopen(filepath, "r");
 	
 	if (!fp) {
@@ -653,6 +675,11 @@ ProgramConfig LoadProgramConfig(const char *filepath)
 			continue;
 		}
 		
+		if (strcmp(key, "bots.autostart") == 0) {
+			program.autostart = (strncmp(value, "true", 4) == 0);
+			continue;
+		}
+		
 		// auto reconnect 
 		if (strcmp(key, "reconnect.enabled") == 0) {
 			program.auto_reconnect  = (strncmp(value, "true", 4) == 0);
@@ -677,11 +704,6 @@ ProgramConfig LoadProgramConfig(const char *filepath)
 		}
 		
 		if (strcmp(key, "webgui.host") == 0) {
-			if (strcmp(value, "localhost") == 0) {
-				strcpy(program.webgui_host, "127.0.0.1");
-				continue;
-			}
-			
 			snprintf(program.webgui_host, sizeof(program.webgui_host), "%s", value);
 			// strncpy(program.webgui_host, value, 16);
 			continue;
@@ -718,14 +740,67 @@ ProgramConfig LoadProgramConfig(const char *filepath)
 
 
 
-bool CreateDefaultProgramConfig(const char *filename)
+/* Files that hold credentials are created readable by the owner only. */
+static FILE *OpenPrivate(const char *path)
 {
-	FILE *fp = fopen(filename, "w");
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	
+	if (fd < 0) {
+		return NULL;
+	}
+	
+	FILE *fp = fdopen(fd, "w");
+	
+	if (!fp) {
+		close(fd);
+	}
+	
+	return fp;
+}
 
+static bool RandomHex(char *out, size_t bytes)
+{
+	unsigned char buf[16];
+	
+	if (bytes > sizeof(buf)) {
+		return false;
+	}
+	
+	FILE *fp = fopen("/dev/urandom", "rb");
+	
 	if (!fp) {
 		return false;
 	}
+	
+	size_t n = fread(buf, 1, bytes, fp);
+	fclose(fp);
+	
+	if (n != bytes) {
+		return false;
+	}
+	
+	for (size_t i = 0; i < bytes; i++) {
+		sprintf(out + i * 2, "%02x", buf[i]);
+	}
+	
+	return true;
+}
 
+bool CreateDefaultProgramConfig(const char *filename, bool include_example)
+{
+	// The Web GUI is on by default, so give it a random password.
+	char pass[33];
+	
+	if (!RandomHex(pass, 12)) {
+		return false;
+	}
+	
+	FILE *fp = OpenPrivate(filename);
+	
+	if (!fp) {
+		return false;
+	}
+	
 	fprintf(fp,
 		"# Lords Mobile Bot - Program Configuration\n"
 		"# This file contains global application settings.\n"
@@ -733,11 +808,11 @@ bool CreateDefaultProgramConfig(const char *filename)
 		"#\n"
 		"# GitHub: https://github.com/halloweeks/lords-mobile-bot\n"
 		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
-
+		
 		"# Gateway server\n"
 		"server.addr = 192.243.44.63\n"
 		"server.port = 5999\n\n"
-
+		
 		"# Game client version\n"
 		"client.version_major = 2\n"
 		"client.version_minor = 205\n"
@@ -753,12 +828,10 @@ bool CreateDefaultProgramConfig(const char *filename)
 		
 		"# Directory used to store bot data (logs, databases, cache, etc.)\n"
 		"data.path = lords-mobile-bot/data/\n\n"
-
-		"# Load one or more bot configuration files.\n"
-		"include = configs/bank123.cfg\n"
-		"# include = configs/farm01.cfg\n"
 		
-		"\n"
+		"# Connect the bots when the program starts.\n"
+		"# When false, start them from the Web GUI (Start all).\n"
+		"bots.autostart = true\n\n"
 		
 		"# Web GUI server\n"
 		"# Use 127.0.0.1 for local access only.\n"
@@ -766,21 +839,91 @@ bool CreateDefaultProgramConfig(const char *filename)
 		"# enabling remote access from other devices, subject to firewall rules.\n"
 		"# Remote access introduces security risks. Use strong authentication\n"
 		"# and appropriate network security measures before exposing the GUI.\n"
-		"webgui.enabled = false\n"
+		"webgui.enabled = true\n"
 		"webgui.host    = 127.0.0.1\n"
 		"webgui.port    = 3370\n"
 		"webgui.auth    = true\n"
 		"webgui.user    = admin\n"
-		"webgui.pass    = change-me\n"
-	);
-
-	fclose(fp);
+		"webgui.pass    = %s\n\n"
+		
+		"# Bot configuration files, one per account.\n"
+		"# Accounts added or removed in the Web GUI are listed here automatically.\n",
+		pass);
+	
+	if (include_example) {
+		fprintf(fp,
+			"include = configs/bank123.cfg\n"
+			"# include = configs/farm01.cfg\n");
+	}
+	
+	if (fclose(fp) != 0) {
+		return false;
+	}
+	
+	LOGI("Web GUI login: user 'admin', password '%s' (saved in %s)\n", pass, filename);
 	return true;
 }
 
-bool CreateDefaultConfig(const char *filename)
+bool ProgramConfigEditInclude(const char *filename, const char *bot_path, bool add)
 {
-	FILE *fp = fopen(filename, "w");
+	char tmp[300];
+	snprintf(tmp, sizeof(tmp), "%s.tmp", filename);
+	
+	FILE *in  = fopen(filename, "r");
+	FILE *out = OpenPrivate(tmp);
+	
+	if (!out) {
+		if (in) fclose(in);
+		return false;
+	}
+	
+	char line[512], key[64], value[512];
+	int last = '\n';
+	
+	while (in && fgets(line, sizeof(line), in)) {
+		size_t len = strlen(line);
+		
+		if (len > 0) {
+			last = line[len - 1];
+		}
+		
+		// Drop the matching include line (same parsing rules as LoadProgramConfig)
+		if (!add && line[0] != '#' && line[0] != ';' &&
+			sscanf(line, " %63[^=]= %511[^\n]", key, value) == 2) {
+			key[strcspn(key, " \t")] = '\0';
+			value[strcspn(value, "\r\n")] = '\0';
+			
+			if (strcmp(key, "include") == 0 && strcmp(value, bot_path) == 0) {
+				continue;
+			}
+		}
+		
+		fputs(line, out);
+	}
+	
+	if (in) {
+		fclose(in);
+	}
+	
+	if (add) {
+		if (last != '\n') {
+			fputc('\n', out);
+		}
+		
+		fprintf(out, "include = %s\n", bot_path);
+	}
+	
+	if (fclose(out) != 0 || rename(tmp, filename) != 0) {
+		unlink(tmp);
+		return false;
+	}
+	
+	return true;
+}
+
+bool CreateBotConfig(const char *filename, const BotAccount *a)
+{
+	FILE *fp = OpenPrivate(filename);
 	
 	if (!fp)
 		return false;
@@ -791,17 +934,25 @@ bool CreateDefaultConfig(const char *filename)
 		"# Copy this file to create additional bot configurations.\n"
 		"#\n"
 		"# GitHub: https://github.com/halloweeks/lords-mobile-bot\n"
-		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n"
-		
-		"# Privileged player.\n"
-		"# This player can execute administrator commands and bypass normal restrictions.\n"
-		"admin.name = halloweeks\n\n"
-		
-		"# Replace the example values below with your own account information.\n"
-		"account.igg_id      = YOUR_NUMERIC_ID_HERE\n"
-		"account.device_uuid = YOUR_DEVICE_UUID_HERE\n"
-		"account.access_key  = YOUR_ACCESS_KEY_HERE\n\n"
-		
+		"# Documentation: https://github.com/halloweeks/lords-mobile-bot/blob/main/docs/configuration.md\n\n");
+	
+	if (a->admin_name[0]) {
+		fprintf(fp,
+			"# Privileged player.\n"
+			"# This player can execute administrator commands and bypass normal restrictions.\n"
+			"admin.name = %s\n\n", a->admin_name);
+	}
+	
+	fprintf(fp,
+		"# Account information.\n"
+		"# Device type: 1 = Android, 9 = Desktop\n"
+		"account.igg_id      = %s\n"
+		"account.device_uuid = %s\n"
+		"account.access_key  = %s\n"
+		"account.device_type = %d\n\n",
+		a->igg_id, a->device_uuid, a->access_key, a->device_type);
+	
+	fprintf(fp,
 		"# Prefix used to identify bot commands.\n"
 		"command.prefix = $\n\n"
 		
@@ -929,6 +1080,19 @@ bool CreateDefaultConfig(const char *filename)
 		"cargo_ship.trade_for_gold  = false\n\n"
 	);
 
-    fclose(fp);
-    return true;
+	return fclose(fp) == 0;
+}
+
+/* Example config with placeholder values (--create-config). */
+bool CreateDefaultConfig(const char *filename)
+{
+	BotAccount example = {
+		"YOUR_NUMERIC_ID_HERE",
+		"YOUR_DEVICE_UUID_HERE",
+		"YOUR_ACCESS_KEY_HERE",
+		1,
+		"halloweeks"
+	};
+	
+	return CreateBotConfig(filename, &example);
 }

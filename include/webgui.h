@@ -5,11 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "connection.h"
+#include "bots.h"
 
 typedef struct {
-	Connection *client;
-	size_t      client_count;
+	BotList *bots;
 
 	char     host[64];
 	uint16_t port;

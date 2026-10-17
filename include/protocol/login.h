@@ -6,6 +6,7 @@
 typedef struct AuthInfo {
     int64_t igg_id;
     char device_uuid[50];
+    uint8_t device_type;   /* 1 = Android, 9 = Desktop */
     uint16_t session_len;
     char session[512];
 } ClientAuth;
